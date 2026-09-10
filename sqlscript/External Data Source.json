@@ -1,0 +1,17 @@
+{
+	"name": "External Data Source",
+	"properties": {
+		"content": {
+			"query": "-- 1. A master key protects credentials stored in this database (only needs to be created once)\nCREATE MASTER KEY ENCRYPTION BY PASSWORD = 'ChooseAStrongPassword123!';\n\n-- 2. A credential that always uses the workspace's own identity\nCREATE DATABASE SCOPED CREDENTIAL cred_managed_identity\nWITH IDENTITY = 'Managed Identity';\n\n-- 3. Attach that credential to both external data sources\nDROP EXTERNAL DATA SOURCE silver_lake;\nCREATE EXTERNAL DATA SOURCE silver_lake\nWITH (LOCATION = 'abfss://silver@stolistdevweu.dfs.core.windows.net/', CREDENTIAL = cred_managed_identity);\n\nDROP EXTERNAL DATA SOURCE gold_lake;\nCREATE EXTERNAL DATA SOURCE gold_lake\nWITH (LOCATION = 'abfss://gold@stolistdevweu.dfs.core.windows.net/', CREDENTIAL = cred_managed_identity);",
+			"metadata": {
+				"language": "sql"
+			},
+			"currentConnection": {
+				"databaseName": "master",
+				"poolName": "Built-in"
+			},
+			"resultLimit": 5000
+		},
+		"type": "SqlQuery"
+	}
+}
