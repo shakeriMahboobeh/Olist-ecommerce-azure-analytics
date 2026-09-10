@@ -1,0 +1,681 @@
+{
+	"$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+	"contentVersion": "1.0.0.0",
+	"parameters": {
+		"workspaceName": {
+			"type": "string",
+			"metadata": "Workspace name",
+			"defaultValue": "synw-olist-dev-weu"
+		},
+		"synw-olist-dev-weu-WorkspaceDefaultSqlServer_connectionString": {
+			"type": "secureString",
+			"metadata": "Secure string for 'connectionString' of 'synw-olist-dev-weu-WorkspaceDefaultSqlServer'",
+			"defaultValue": "Integrated Security=False;Encrypt=True;Connection Timeout=30;Data Source=tcp:synw-olist-dev-weu.sql.azuresynapse.net,1433;Initial Catalog=@{linkedService().DBName}"
+		},
+		"ls_synapse_serverless_gold_properties_typeProperties_server": {
+			"type": "string",
+			"defaultValue": "synw-olist-dev-weu-ondemand.sql.azuresynapse.net,1433"
+		},
+		"ls_synapse_serverless_gold_properties_typeProperties_database": {
+			"type": "string",
+			"defaultValue": "db_olist_gold"
+		},
+		"synw-olist-dev-weu-WorkspaceDefaultStorage_properties_typeProperties_url": {
+			"type": "string",
+			"defaultValue": "https://stolistdevweu.dfs.core.windows.net"
+		}
+	},
+	"variables": {
+		"workspaceId": "[concat('Microsoft.Synapse/workspaces/', parameters('workspaceName'))]"
+	},
+	"resources": [
+		{
+			"name": "[concat(parameters('workspaceName'), '/pl_olist_bronze_to_gold')]",
+			"type": "Microsoft.Synapse/workspaces/pipelines",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"activities": [
+					{
+						"name": "nb_bronze_to_silver",
+						"type": "SynapseNotebook",
+						"dependsOn": [],
+						"policy": {
+							"timeout": "0.12:00:00",
+							"retry": 0,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"notebook": {
+								"referenceName": "nb_bronze_to_silver",
+								"type": "NotebookReference"
+							},
+							"snapshot": true,
+							"sparkPool": {
+								"referenceName": "sparksmall",
+								"type": "BigDataPoolReference"
+							},
+							"conf": {
+								"spark.dynamicAllocation.enabled": null,
+								"spark.dynamicAllocation.minExecutors": null,
+								"spark.dynamicAllocation.maxExecutors": null
+							},
+							"numExecutors": null
+						}
+					},
+					{
+						"name": "gold_dimensions",
+						"type": "Script",
+						"dependsOn": [
+							{
+								"activity": "nb_clear_gold",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "0.12:00:00",
+							"retry": 0,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"linkedServiceName": {
+							"referenceName": "ls_synapse_serverless_gold",
+							"type": "LinkedServiceReference"
+						},
+						"typeProperties": {
+							"scripts": [
+								{
+									"type": "Query",
+									"text": "IF EXISTS (SELECT * FROM sys.external_tables WHERE name = 'dim_customer')\n    EXEC('DROP EXTERNAL TABLE dim_customer');\nIF EXISTS (SELECT * FROM sys.external_tables WHERE name = 'dim_seller')\n    EXEC('DROP EXTERNAL TABLE dim_seller');\nIF EXISTS (SELECT * FROM sys.external_tables WHERE name = 'dim_product')\n    EXEC('DROP EXTERNAL TABLE dim_product');\nIF EXISTS (SELECT * FROM sys.external_tables WHERE name = 'dim_date')\n    EXEC('DROP EXTERNAL TABLE dim_date');\n\n\nCREATE EXTERNAL TABLE dim_customer\nWITH (LOCATION = 'dim_customer/', DATA_SOURCE = gold_lake, FILE_FORMAT = parquet_ff)\nAS\nSELECT ROW_NUMBER() OVER (ORDER BY customer_id) AS customer_key, *\nFROM (\n    SELECT DISTINCT customer_id, customer_unique_id, customer_city, customer_state, customer_zip_code_prefix\n    FROM OPENROWSET(BULK 'olist_customers_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS c\n) AS c;\n\nCREATE EXTERNAL TABLE dim_seller\nWITH (LOCATION = 'dim_seller/', DATA_SOURCE = gold_lake, FILE_FORMAT = parquet_ff)\nAS\nSELECT ROW_NUMBER() OVER (ORDER BY seller_id) AS seller_key, *\nFROM (\n    SELECT DISTINCT seller_id, seller_city, seller_state, seller_zip_code_prefix\n    FROM OPENROWSET(BULK 'olist_sellers_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS s\n) AS s;\n\nCREATE EXTERNAL TABLE dim_product\nWITH (LOCATION = 'dim_product/', DATA_SOURCE = gold_lake, FILE_FORMAT = parquet_ff)\nAS\nSELECT ROW_NUMBER() OVER (ORDER BY product_id) AS product_key, *\nFROM (\n    SELECT DISTINCT p.product_id, p.product_category_name, t.product_category_name_english,\n           p.product_weight_g, p.product_length_cm, p.product_height_cm, p.product_width_cm\n    FROM OPENROWSET(BULK 'olist_products_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS p\n    LEFT JOIN OPENROWSET(BULK 'product_category_name_translation', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS t\n        ON p.product_category_name = t.product_category_name\n) AS p;\n\nCREATE EXTERNAL TABLE dim_date\nWITH (\n    LOCATION = 'dim_date/',\n    DATA_SOURCE = gold_lake,\n    FILE_FORMAT = parquet_ff\n)\nAS\nSELECT *\nFROM OPENROWSET(\n    BULK 'dim_date_seed/',\n    DATA_SOURCE = 'silver_lake',\n    FORMAT = 'DELTA'\n) AS rows;\n"
+								}
+							],
+							"scriptBlockExecutionTimeout": "02:00:00"
+						}
+					},
+					{
+						"name": "gold_fact",
+						"type": "Script",
+						"dependsOn": [
+							{
+								"activity": "gold_dimensions",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "0.12:00:00",
+							"retry": 0,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"linkedServiceName": {
+							"referenceName": "ls_synapse_serverless_gold",
+							"type": "LinkedServiceReference"
+						},
+						"typeProperties": {
+							"scripts": [
+								{
+									"type": "Query",
+									"text": "IF EXISTS (SELECT * FROM sys.external_tables WHERE name = 'fact_order_items')\r\n    EXEC('DROP EXTERNAL TABLE fact_order_items');\r\n    \r\nCREATE EXTERNAL TABLE fact_order_items\r\nWITH (LOCATION = 'fact_order_items/', DATA_SOURCE = gold_lake, FILE_FORMAT = parquet_ff)\r\nAS\r\nSELECT\r\n    ROW_NUMBER() OVER (ORDER BY oi.order_id, oi.order_item_id) AS order_item_key,\r\n    dc.customer_key, dp.product_key, ds.seller_key, dd.date_key as order_date_key,\r\n    oi.order_id, oi.order_item_id, oi.price, oi.freight_value,\r\n    pay.total_payment_value, rev.avg_review_score\r\nFROM OPENROWSET(BULK 'olist_order_items_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS oi\r\nJOIN OPENROWSET(BULK 'olist_orders_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS o\r\n    ON oi.order_id = o.order_id\r\nJOIN dim_customer dc ON o.customer_id = dc.customer_id\r\nJOIN dim_product dp ON oi.product_id = dp.product_id\r\nJOIN dim_seller ds ON oi.seller_id = ds.seller_id\r\nJOIN dim_date dd ON CAST(o.order_purchase_timestamp AS DATE) = dd.Date\r\nLEFT JOIN (\r\n    SELECT order_id, SUM(payment_value) AS total_payment_value\r\n    FROM OPENROWSET(BULK 'olist_order_payments_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS p\r\n    GROUP BY order_id\r\n) pay ON oi.order_id = pay.order_id\r\nLEFT JOIN (\r\n    SELECT order_id, AVG(TRY_CAST(review_score AS FLOAT)) AS avg_review_score\r\n    FROM OPENROWSET(BULK 'olist_order_reviews_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS r\r\n    GROUP BY order_id\r\n) rev ON oi.order_id = rev.order_id;"
+								}
+							],
+							"scriptBlockExecutionTimeout": "02:00:00"
+						}
+					},
+					{
+						"name": "nb_clear_gold",
+						"type": "SynapseNotebook",
+						"dependsOn": [
+							{
+								"activity": "nb_bronze_to_silver",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "0.12:00:00",
+							"retry": 0,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"notebook": {
+								"referenceName": "nb_clear_gold",
+								"type": "NotebookReference"
+							},
+							"snapshot": true,
+							"sparkPool": {
+								"referenceName": "sparksmall",
+								"type": "BigDataPoolReference"
+							},
+							"conf": {
+								"spark.dynamicAllocation.enabled": null,
+								"spark.dynamicAllocation.minExecutors": null,
+								"spark.dynamicAllocation.maxExecutors": null
+							},
+							"numExecutors": null
+						}
+					}
+				],
+				"policy": {
+					"elapsedTimeMetric": {}
+				},
+				"annotations": [],
+				"lastPublishTime": "2026-09-10T08:48:49Z"
+			},
+			"dependsOn": [
+				"[concat(variables('workspaceId'), '/notebooks/nb_bronze_to_silver')]",
+				"[concat(variables('workspaceId'), '/bigDataPools/sparksmall')]",
+				"[concat(variables('workspaceId'), '/linkedServices/ls_synapse_serverless_gold')]",
+				"[concat(variables('workspaceId'), '/notebooks/nb_clear_gold')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/ds_gold_container')]",
+			"type": "Microsoft.Synapse/workspaces/datasets",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"linkedServiceName": {
+					"referenceName": "synw-olist-dev-weu-WorkspaceDefaultStorage",
+					"type": "LinkedServiceReference"
+				},
+				"annotations": [],
+				"type": "Binary",
+				"typeProperties": {
+					"location": {
+						"type": "AzureBlobFSLocation",
+						"fileSystem": "gold"
+					}
+				}
+			},
+			"dependsOn": [
+				"[concat(variables('workspaceId'), '/linkedServices/synw-olist-dev-weu-WorkspaceDefaultStorage')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/ls_synapse_serverless_gold')]",
+			"type": "Microsoft.Synapse/workspaces/linkedServices",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"annotations": [],
+				"type": "AzureSqlDW",
+				"typeProperties": {
+					"server": "[parameters('ls_synapse_serverless_gold_properties_typeProperties_server')]",
+					"database": "[parameters('ls_synapse_serverless_gold_properties_typeProperties_database')]",
+					"encrypt": "mandatory",
+					"trustServerCertificate": false,
+					"authenticationType": "SystemAssignedManagedIdentity"
+				},
+				"connectVia": {
+					"referenceName": "AutoResolveIntegrationRuntime",
+					"type": "IntegrationRuntimeReference"
+				}
+			},
+			"dependsOn": [
+				"[concat(variables('workspaceId'), '/integrationRuntimes/AutoResolveIntegrationRuntime')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/synw-olist-dev-weu-WorkspaceDefaultSqlServer')]",
+			"type": "Microsoft.Synapse/workspaces/linkedServices",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"parameters": {
+					"DBName": {
+						"type": "String"
+					}
+				},
+				"annotations": [],
+				"type": "AzureSqlDW",
+				"typeProperties": {
+					"connectionString": "[parameters('synw-olist-dev-weu-WorkspaceDefaultSqlServer_connectionString')]"
+				},
+				"connectVia": {
+					"referenceName": "AutoResolveIntegrationRuntime",
+					"type": "IntegrationRuntimeReference"
+				}
+			},
+			"dependsOn": [
+				"[concat(variables('workspaceId'), '/integrationRuntimes/AutoResolveIntegrationRuntime')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/synw-olist-dev-weu-WorkspaceDefaultStorage')]",
+			"type": "Microsoft.Synapse/workspaces/linkedServices",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"annotations": [],
+				"type": "AzureBlobFS",
+				"typeProperties": {
+					"url": "[parameters('synw-olist-dev-weu-WorkspaceDefaultStorage_properties_typeProperties_url')]"
+				},
+				"connectVia": {
+					"referenceName": "AutoResolveIntegrationRuntime",
+					"type": "IntegrationRuntimeReference"
+				}
+			},
+			"dependsOn": [
+				"[concat(variables('workspaceId'), '/integrationRuntimes/AutoResolveIntegrationRuntime')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/AutoResolveIntegrationRuntime')]",
+			"type": "Microsoft.Synapse/workspaces/integrationRuntimes",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"type": "Managed",
+				"typeProperties": {
+					"computeProperties": {
+						"location": "AutoResolve",
+						"dataFlowProperties": {
+							"computeType": "General",
+							"coreCount": 8,
+							"timeToLive": 0
+						}
+					}
+				}
+			},
+			"dependsOn": []
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/WorkspaceSystemIdentity')]",
+			"type": "Microsoft.Synapse/workspaces/credentials",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"type": "ManagedIdentity",
+				"typeProperties": {}
+			},
+			"dependsOn": []
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/DWH-Dimension')]",
+			"type": "Microsoft.Synapse/workspaces/sqlscripts",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"content": {
+					"query": "\nUSE db_olist_gold;\n\n/* \nCREATE EXTERNAL DATA SOURCE silver_lake\nWITH (LOCATION = 'abfss://silver@stolistdevweu.dfs.core.windows.net/');\n\nCREATE EXTERNAL DATA SOURCE gold_lake\nWITH (LOCATION = 'abfss://gold@stolistdevweu.dfs.core.windows.net/');\n\nCREATE EXTERNAL FILE FORMAT parquet_ff\nWITH (FORMAT_TYPE = PARQUET);\n*/\nIF EXISTS (SELECT * FROM sys.external_tables WHERE name = 'dim_customer')\n    EXEC('DROP EXTERNAL TABLE dim_customer');\nIF EXISTS (SELECT * FROM sys.external_tables WHERE name = 'dim_seller')\n    EXEC('DROP EXTERNAL TABLE dim_seller');\nIF EXISTS (SELECT * FROM sys.external_tables WHERE name = 'dim_product')\n    EXEC('DROP EXTERNAL TABLE dim_product');\nIF EXISTS (SELECT * FROM sys.external_tables WHERE name = 'dim_date')\n    EXEC('DROP EXTERNAL TABLE dim_date');\n\n\nCREATE EXTERNAL TABLE dim_customer\nWITH (LOCATION = 'dim_customer/', DATA_SOURCE = gold_lake, FILE_FORMAT = parquet_ff)\nAS\nSELECT ROW_NUMBER() OVER (ORDER BY customer_id) AS customer_key, *\nFROM (\n    SELECT DISTINCT customer_id, customer_unique_id, customer_city, customer_state, customer_zip_code_prefix\n    FROM OPENROWSET(BULK 'olist_customers_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS c\n) AS c;\n\nCREATE EXTERNAL TABLE dim_seller\nWITH (LOCATION = 'dim_seller/', DATA_SOURCE = gold_lake, FILE_FORMAT = parquet_ff)\nAS\nSELECT ROW_NUMBER() OVER (ORDER BY seller_id) AS seller_key, *\nFROM (\n    SELECT DISTINCT seller_id, seller_city, seller_state, seller_zip_code_prefix\n    FROM OPENROWSET(BULK 'olist_sellers_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS s\n) AS s;\n\nCREATE EXTERNAL TABLE dim_product\nWITH (LOCATION = 'dim_product/', DATA_SOURCE = gold_lake, FILE_FORMAT = parquet_ff)\nAS\nSELECT ROW_NUMBER() OVER (ORDER BY product_id) AS product_key, *\nFROM (\n    SELECT DISTINCT p.product_id, p.product_category_name, t.product_category_name_english,\n           p.product_weight_g, p.product_length_cm, p.product_height_cm, p.product_width_cm\n    FROM OPENROWSET(BULK 'olist_products_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS p\n    LEFT JOIN OPENROWSET(BULK 'product_category_name_translation', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS t\n        ON p.product_category_name = t.product_category_name\n) AS p;\n\nCREATE EXTERNAL TABLE dim_date\nWITH (\n    LOCATION = 'dim_date/',\n    DATA_SOURCE = gold_lake,\n    FILE_FORMAT = parquet_ff\n)\nAS\nSELECT *\nFROM OPENROWSET(\n    BULK 'dim_date_seed/',\n    DATA_SOURCE = 'silver_lake',\n    FORMAT = 'DELTA'\n) AS rows;\n",
+					"metadata": {
+						"language": "sql"
+					},
+					"currentConnection": {
+						"databaseName": "db_olist_gold",
+						"poolName": "Built-in"
+					},
+					"resultLimit": 5000
+				},
+				"type": "SqlQuery"
+			},
+			"dependsOn": []
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/DWH-Fact')]",
+			"type": "Microsoft.Synapse/workspaces/sqlscripts",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"content": {
+					"query": "-- USE db_olist_gold;\nIF EXISTS (SELECT * FROM sys.external_tables WHERE name = 'fact_order_items')\n    EXEC('DROP EXTERNAL TABLE fact_order_items');\n    \nCREATE EXTERNAL TABLE fact_order_items\nWITH (LOCATION = 'fact_order_items/', DATA_SOURCE = gold_lake, FILE_FORMAT = parquet_ff)\nAS\nSELECT\n    ROW_NUMBER() OVER (ORDER BY oi.order_id, oi.order_item_id) AS order_item_key,\n    dc.customer_key, dp.product_key, ds.seller_key, dd.date_key as order_date_key,\n    oi.order_id, oi.order_item_id, oi.price, oi.freight_value,\n    pay.total_payment_value, rev.avg_review_score\nFROM OPENROWSET(BULK 'olist_order_items_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS oi\nJOIN OPENROWSET(BULK 'olist_orders_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS o\n    ON oi.order_id = o.order_id\nJOIN dim_customer dc ON o.customer_id = dc.customer_id\nJOIN dim_product dp ON oi.product_id = dp.product_id\nJOIN dim_seller ds ON oi.seller_id = ds.seller_id\nJOIN dim_date dd ON CAST(o.order_purchase_timestamp AS DATE) = dd.Date\nLEFT JOIN (\n    SELECT order_id, SUM(payment_value) AS total_payment_value\n    FROM OPENROWSET(BULK 'olist_order_payments_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS p\n    GROUP BY order_id\n) pay ON oi.order_id = pay.order_id\nLEFT JOIN (\n    SELECT order_id, AVG(TRY_CAST(review_score AS FLOAT)) AS avg_review_score\n    FROM OPENROWSET(BULK 'olist_order_reviews_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS r\n    GROUP BY order_id\n) rev ON oi.order_id = rev.order_id;",
+					"metadata": {
+						"language": "sql"
+					},
+					"currentConnection": {
+						"databaseName": "db_olist_gold",
+						"poolName": "Built-in"
+					},
+					"resultLimit": 5000
+				},
+				"type": "SqlQuery"
+			},
+			"dependsOn": []
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/External Data Source')]",
+			"type": "Microsoft.Synapse/workspaces/sqlscripts",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"content": {
+					"query": "-- 1. A master key protects credentials stored in this database (only needs to be created once)\nCREATE MASTER KEY ENCRYPTION BY PASSWORD = 'ChooseAStrongPassword123!';\n\n-- 2. A credential that always uses the workspace's own identity\nCREATE DATABASE SCOPED CREDENTIAL cred_managed_identity\nWITH IDENTITY = 'Managed Identity';\n\n-- 3. Attach that credential to both external data sources\nDROP EXTERNAL DATA SOURCE silver_lake;\nCREATE EXTERNAL DATA SOURCE silver_lake\nWITH (LOCATION = 'abfss://silver@stolistdevweu.dfs.core.windows.net/', CREDENTIAL = cred_managed_identity);\n\nDROP EXTERNAL DATA SOURCE gold_lake;\nCREATE EXTERNAL DATA SOURCE gold_lake\nWITH (LOCATION = 'abfss://gold@stolistdevweu.dfs.core.windows.net/', CREDENTIAL = cred_managed_identity);",
+					"metadata": {
+						"language": "sql"
+					},
+					"currentConnection": {
+						"databaseName": "master",
+						"poolName": "Built-in"
+					},
+					"resultLimit": 5000
+				},
+				"type": "SqlQuery"
+			},
+			"dependsOn": []
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/Grant Access')]",
+			"type": "Microsoft.Synapse/workspaces/sqlscripts",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"content": {
+					"query": "CREATE USER [synw-olist-dev-weu] FROM EXTERNAL PROVIDER;\nALTER ROLE db_owner ADD MEMBER [synw-olist-dev-weu];",
+					"metadata": {
+						"language": "sql"
+					},
+					"currentConnection": {
+						"databaseName": "db_olist_gold",
+						"poolName": "Built-in"
+					},
+					"resultLimit": 5000
+				},
+				"type": "SqlQuery"
+			},
+			"dependsOn": []
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/Sanity Check')]",
+			"type": "Microsoft.Synapse/workspaces/sqlscripts",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"content": {
+					"query": "-- 1. Row counts — sanity check nothing is empty\nSELECT 'dim_customer' AS TableName, COUNT(*) AS Rows FROM dim_customer\nUNION ALL SELECT 'dim_seller', COUNT(*) FROM dim_seller\nUNION ALL SELECT 'dim_product', COUNT(*) FROM dim_product\nUNION ALL SELECT 'dim_date', COUNT(*) FROM dim_date\nUNION ALL SELECT 'fact_order_items', COUNT(*) FROM fact_order_items;\n\n-- 2. Prove the joins actually work end to end\nSELECT TOP 10\n    c.customer_city,\n    p.product_category_name,\n    d.month_name,\n    d.year,\n    f.price\nFROM fact_order_items f\nJOIN dim_customer c ON f.customer_key = c.customer_key\nJOIN dim_product  p ON f.product_key  = p.product_key\nJOIN dim_date     d ON f.order_date_key = d.date_key;\n\n",
+					"metadata": {
+						"language": "sql"
+					},
+					"currentConnection": {
+						"databaseName": "db_olist_gold",
+						"poolName": "Built-in"
+					},
+					"resultLimit": 5000
+				},
+				"type": "SqlQuery"
+			},
+			"dependsOn": []
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/nb_bronze_to_silver')]",
+			"type": "Microsoft.Synapse/workspaces/notebooks",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"nbformat": 4,
+				"nbformat_minor": 2,
+				"bigDataPool": {
+					"referenceName": "sparksmall",
+					"type": "BigDataPoolReference"
+				},
+				"sessionProperties": {
+					"driverMemory": "28g",
+					"driverCores": 4,
+					"executorMemory": "28g",
+					"executorCores": 4,
+					"numExecutors": 2,
+					"runAsWorkspaceSystemIdentity": false,
+					"conf": {
+						"spark.dynamicAllocation.enabled": "false",
+						"spark.dynamicAllocation.minExecutors": "2",
+						"spark.dynamicAllocation.maxExecutors": "2",
+						"spark.autotune.trackingId": "96af95df-5249-4c28-9dfb-65c668799ed4"
+					}
+				},
+				"metadata": {
+					"saveOutput": true,
+					"synapse_widget": {
+						"version": "0.1"
+					},
+					"enableDebugMode": false,
+					"language_info": {
+						"name": "python"
+					},
+					"a365ComputeOptions": {
+						"id": "/subscriptions/35428b8e-e959-4add-b13a-ef130437fec9/resourceGroups/rg-olist-dev-weu/providers/Microsoft.Synapse/workspaces/synw-olist-dev-weu/bigDataPools/sparksmall",
+						"name": "sparksmall",
+						"type": "Spark",
+						"endpoint": "https://synw-olist-dev-weu.dev.azuresynapse.net/livyApi/versions/2019-11-01-preview/sparkPools/sparksmall",
+						"auth": {
+							"type": "AAD",
+							"authResource": "https://dev.azuresynapse.net",
+							"authHeader": null
+						},
+						"sparkVersion": "3.5",
+						"nodeCount": 10,
+						"cores": 4,
+						"memory": 28,
+						"extraHeader": null
+					},
+					"sessionKeepAliveTimeout": 30
+				},
+				"cells": [
+					{
+						"cell_type": "code",
+						"source": [
+							"from pyspark.sql.functions import col, trim, lower, upper, to_timestamp\n",
+							"\n",
+							"def basic_clean(df):\n",
+							"    df = df.dropDuplicates()\n",
+							"    for c, t in df.dtypes:\n",
+							"        if t == \"string\":\n",
+							"            df = df.withColumn(c, trim(col(c)))\n",
+							"    return df\n",
+							"\n",
+							"def clean_orders(df):\n",
+							"    df = basic_clean(df)\n",
+							"    df = df.filter(col(\"order_id\").isNotNull())\n",
+							"    df = df.withColumn(\"order_status\", lower(trim(col(\"order_status\"))))\n",
+							"    for ts_col in [\"order_purchase_timestamp\", \"order_approved_at\",\n",
+							"                   \"order_delivered_carrier_date\", \"order_delivered_customer_date\",\n",
+							"                   \"order_estimated_delivery_date\"]:\n",
+							"        df = df.withColumn(ts_col, to_timestamp(col(ts_col)))\n",
+							"    return df\n",
+							"\n",
+							"def clean_order_items(df):\n",
+							"    df = basic_clean(df)\n",
+							"    df = df.dropDuplicates([\"order_id\", \"order_item_id\"])\n",
+							"    df = df.filter((col(\"price\") >= 0) & (col(\"freight_value\") >= 0))\n",
+							"    return df\n",
+							"\n",
+							"def clean_customers(df):\n",
+							"    df = basic_clean(df).dropDuplicates([\"customer_id\"])\n",
+							"    return df.withColumn(\"customer_state\", upper(trim(col(\"customer_state\"))))\n",
+							"\n",
+							"def clean_sellers(df):\n",
+							"    df = basic_clean(df).dropDuplicates([\"seller_id\"])\n",
+							"    return df.withColumn(\"seller_state\", upper(trim(col(\"seller_state\"))))\n",
+							"\n",
+							"def clean_products(df):\n",
+							"    df = basic_clean(df)\n",
+							"    return df.fillna({\"product_category_name\": \"unknown\"})\n",
+							"\n",
+							"def clean_order_payments(df):\n",
+							"    df = basic_clean(df)\n",
+							"    return df.filter(col(\"payment_value\") >= 0)\n",
+							"\n",
+							"def clean_order_reviews(df):\n",
+							"    df = basic_clean(df)\n",
+							"    df = df.withColumn(\"review_creation_date\", to_timestamp(col(\"review_creation_date\")))\n",
+							"    df = df.withColumn(\"review_answer_timestamp\", to_timestamp(col(\"review_answer_timestamp\")))\n",
+							"    df = df.dropDuplicates([\"review_id\", \"order_id\"])\n",
+							"    return df\n",
+							"\n",
+							"def clean_geolocation(df):\n",
+							"    df = basic_clean(df)  # this alone removes a huge number of exact-duplicate rows\n",
+							"    return df.filter(col(\"geolocation_lat\").between(-34, 6) &\n",
+							"                      col(\"geolocation_lng\").between(-74, -32))  # rough Brazil bounding box\n",
+							"\n",
+							"def clean_category_translation(df):\n",
+							"    df = basic_clean(df)\n",
+							"    df = df.withColumn(\"product_category_name\", lower(trim(col(\"product_category_name\"))))\n",
+							"    return df.withColumn(\"product_category_name_english\", lower(trim(col(\"product_category_name_english\"))))\n",
+							"\n",
+							"cleaning_functions = {\n",
+							"    \"olist_orders_dataset\": clean_orders,\n",
+							"    \"olist_order_items_dataset\": clean_order_items,\n",
+							"    \"olist_customers_dataset\": clean_customers,\n",
+							"    \"olist_sellers_dataset\": clean_sellers,\n",
+							"    \"olist_products_dataset\": clean_products,\n",
+							"    \"olist_order_payments_dataset\": clean_order_payments,\n",
+							"    \"olist_order_reviews_dataset\": clean_order_reviews,   \n",
+							"    \"olist_geolocation_dataset\": clean_geolocation,\n",
+							"    \"product_category_name_translation\": clean_category_translation,\n",
+							"}\n",
+							"\n",
+							"for file_name, clean_fn in cleaning_functions.items():\n",
+							"\n",
+							"    spark.sql(f\"DROP TABLE IF EXISTS default.{file_name}\")\n",
+							"    raw_df = spark.read.option(\"header\", \"true\").option(\"inferSchema\", \"true\") \\\n",
+							"        .csv(f\"abfss://bronze@stolistdevweu.dfs.core.windows.net/{file_name}.csv\")\n",
+							"\n",
+							"    clean_df = clean_fn(raw_df)\n",
+							"\n",
+							"    clean_df.write.format(\"delta\").mode(\"overwrite\") \\\n",
+							"        .option(\"path\", f\"abfss://silver@stolistdevweu.dfs.core.windows.net/{file_name}\") \\\n",
+							"        .saveAsTable(file_name)\n",
+							"\n",
+							"    print(f\"{file_name}: {raw_df.count()} raw -> {clean_df.count()} cleaned\")"
+						],
+						"outputs": [],
+						"execution_count": 6
+					},
+					{
+						"cell_type": "code",
+						"source": [
+							"from pyspark.sql import functions as F\n",
+							"\n",
+							"# 1. Generate one row per day between the two dates\n",
+							"spark.sql(\"DROP TABLE IF EXISTS default.dim_date_seed\")\n",
+							"df_date = spark.sql(\"\"\"\n",
+							"    SELECT explode(sequence(to_date('2016-01-01'), to_date('2018-12-31'), interval 1 day)) as Date\n",
+							"\"\"\")\n",
+							"\n",
+							"# 2. Add the descriptive columns\n",
+							"df_date = df_date \\\n",
+							"    .withColumn(\"date_key\", F.date_format(\"Date\", \"yyyyMMdd\").cast(\"int\")) \\\n",
+							"    .withColumn(\"year\", F.year(\"Date\")) \\\n",
+							"    .withColumn(\"quarter\", F.quarter(\"Date\")) \\\n",
+							"    .withColumn(\"month\", F.month(\"Date\")) \\\n",
+							"    .withColumn(\"month_name\", F.date_format(\"Date\", \"MMMM\")) \\\n",
+							"    .withColumn(\"day_of_month\", F.dayofmonth(\"Date\")) \\\n",
+							"    .withColumn(\"day_of_week\", F.dayofweek(\"Date\")) \\\n",
+							"    .withColumn(\"day_name\", F.date_format(\"Date\", \"EEEE\")) \\\n",
+							"    .withColumn(\"week_of_year\", F.weekofyear(\"Date\")) \\\n",
+							"    .withColumn(\"is_weekend\", F.when(F.dayofweek(\"Date\").isin([1, 7]), 1).otherwise(0))\n",
+							"\n",
+							"# 3. Save it into the silver container, same pattern as your other tables\n",
+							"df_date.write.format(\"delta\").mode(\"overwrite\") \\\n",
+							"    .option(\"path\", \"abfss://silver@stolistdevweu.dfs.core.windows.net/dim_date_seed\") \\\n",
+							"    .saveAsTable(\"dim_date_seed\")"
+						],
+						"outputs": [],
+						"execution_count": 4
+					}
+				]
+			},
+			"dependsOn": []
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/nb_clear_gold')]",
+			"type": "Microsoft.Synapse/workspaces/notebooks",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"nbformat": 4,
+				"nbformat_minor": 2,
+				"bigDataPool": {
+					"referenceName": "sparksmall",
+					"type": "BigDataPoolReference"
+				},
+				"sessionProperties": {
+					"driverMemory": "28g",
+					"driverCores": 4,
+					"executorMemory": "28g",
+					"executorCores": 4,
+					"numExecutors": 2,
+					"runAsWorkspaceSystemIdentity": false,
+					"conf": {
+						"spark.dynamicAllocation.enabled": "false",
+						"spark.dynamicAllocation.minExecutors": "2",
+						"spark.dynamicAllocation.maxExecutors": "2",
+						"spark.autotune.trackingId": "62a0a9aa-158d-4500-b035-91182e889549"
+					}
+				},
+				"metadata": {
+					"saveOutput": true,
+					"synapse_widget": {
+						"version": "0.1"
+					},
+					"enableDebugMode": false,
+					"language_info": {
+						"name": "python"
+					},
+					"a365ComputeOptions": {
+						"id": "/subscriptions/35428b8e-e959-4add-b13a-ef130437fec9/resourceGroups/rg-olist-dev-weu/providers/Microsoft.Synapse/workspaces/synw-olist-dev-weu/bigDataPools/sparksmall",
+						"name": "sparksmall",
+						"type": "Spark",
+						"endpoint": "https://synw-olist-dev-weu.dev.azuresynapse.net/livyApi/versions/2019-11-01-preview/sparkPools/sparksmall",
+						"auth": {
+							"type": "AAD",
+							"authResource": "https://dev.azuresynapse.net",
+							"authHeader": null
+						},
+						"sparkVersion": "3.5",
+						"nodeCount": 10,
+						"cores": 4,
+						"memory": 28,
+						"extraHeader": null
+					},
+					"sessionKeepAliveTimeout": 30
+				},
+				"cells": [
+					{
+						"cell_type": "code",
+						"source": [
+							"from notebookutils import mssparkutils\n",
+							"\n",
+							"tables = [\"dim_customer\", \"dim_seller\", \"dim_product\", \"dim_date\", \"fact_order_items\"]\n",
+							"\n",
+							"for t in tables:\n",
+							"    path = f\"abfss://gold@stolistdevweu.dfs.core.windows.net/{t}/\"\n",
+							"    try:\n",
+							"        mssparkutils.fs.rm(path, True)\n",
+							"        print(f\"Deleted: {t}\")\n",
+							"    except Exception as e:\n",
+							"        print(f\"Skipped {t} (likely already empty): {e}\")"
+						],
+						"outputs": []
+					}
+				]
+			},
+			"dependsOn": []
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/sparksmall')]",
+			"type": "Microsoft.Synapse/workspaces/bigDataPools",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"autoPause": {
+					"enabled": true,
+					"delayInMinutes": 5
+				},
+				"autoScale": {
+					"enabled": true,
+					"maxNodeCount": 10,
+					"minNodeCount": 3
+				},
+				"nodeCount": 10,
+				"nodeSize": "Small",
+				"nodeSizeFamily": "MemoryOptimized",
+				"sparkVersion": "3.5",
+				"isComputeIsolationEnabled": false,
+				"sessionLevelPackagesEnabled": false,
+				"annotations": []
+			},
+			"dependsOn": [],
+			"location": "swedencentral"
+		}
+	]
+}

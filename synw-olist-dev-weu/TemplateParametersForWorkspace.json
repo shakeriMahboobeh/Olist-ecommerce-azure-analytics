@@ -1,0 +1,21 @@
+{
+	"$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+	"contentVersion": "1.0.0.0",
+	"parameters": {
+		"workspaceName": {
+			"value": "synw-olist-dev-weu"
+		},
+		"synw-olist-dev-weu-WorkspaceDefaultSqlServer_connectionString": {
+			"value": "Integrated Security=False;Encrypt=True;Connection Timeout=30;Data Source=tcp:synw-olist-dev-weu.sql.azuresynapse.net,1433;Initial Catalog=@{linkedService().DBName}"
+		},
+		"ls_synapse_serverless_gold_properties_typeProperties_server": {
+			"value": "synw-olist-dev-weu-ondemand.sql.azuresynapse.net,1433"
+		},
+		"ls_synapse_serverless_gold_properties_typeProperties_database": {
+			"value": "db_olist_gold"
+		},
+		"synw-olist-dev-weu-WorkspaceDefaultStorage_properties_typeProperties_url": {
+			"value": "https://stolistdevweu.dfs.core.windows.net"
+		}
+	}
+}
