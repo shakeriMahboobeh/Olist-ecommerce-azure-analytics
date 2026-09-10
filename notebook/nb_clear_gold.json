@@ -1,0 +1,70 @@
+{
+	"name": "nb_clear_gold",
+	"properties": {
+		"nbformat": 4,
+		"nbformat_minor": 2,
+		"bigDataPool": {
+			"referenceName": "sparksmall",
+			"type": "BigDataPoolReference"
+		},
+		"sessionProperties": {
+			"driverMemory": "28g",
+			"driverCores": 4,
+			"executorMemory": "28g",
+			"executorCores": 4,
+			"numExecutors": 2,
+			"runAsWorkspaceSystemIdentity": false,
+			"conf": {
+				"spark.dynamicAllocation.enabled": "false",
+				"spark.dynamicAllocation.minExecutors": "2",
+				"spark.dynamicAllocation.maxExecutors": "2",
+				"spark.autotune.trackingId": "62a0a9aa-158d-4500-b035-91182e889549"
+			}
+		},
+		"metadata": {
+			"saveOutput": true,
+			"synapse_widget": {
+				"version": "0.1"
+			},
+			"enableDebugMode": false,
+			"language_info": {
+				"name": "python"
+			},
+			"a365ComputeOptions": {
+				"id": "/subscriptions/35428b8e-e959-4add-b13a-ef130437fec9/resourceGroups/rg-olist-dev-weu/providers/Microsoft.Synapse/workspaces/synw-olist-dev-weu/bigDataPools/sparksmall",
+				"name": "sparksmall",
+				"type": "Spark",
+				"endpoint": "https://synw-olist-dev-weu.dev.azuresynapse.net/livyApi/versions/2019-11-01-preview/sparkPools/sparksmall",
+				"auth": {
+					"type": "AAD",
+					"authResource": "https://dev.azuresynapse.net",
+					"authHeader": null
+				},
+				"sparkVersion": "3.5",
+				"nodeCount": 10,
+				"cores": 4,
+				"memory": 28,
+				"extraHeader": null
+			},
+			"sessionKeepAliveTimeout": 30
+		},
+		"cells": [
+			{
+				"cell_type": "code",
+				"source": [
+					"from notebookutils import mssparkutils\n",
+					"\n",
+					"tables = [\"dim_customer\", \"dim_seller\", \"dim_product\", \"dim_date\", \"fact_order_items\"]\n",
+					"\n",
+					"for t in tables:\n",
+					"    path = f\"abfss://gold@stolistdevweu.dfs.core.windows.net/{t}/\"\n",
+					"    try:\n",
+					"        mssparkutils.fs.rm(path, True)\n",
+					"        print(f\"Deleted: {t}\")\n",
+					"    except Exception as e:\n",
+					"        print(f\"Skipped {t} (likely already empty): {e}\")"
+				]
+			}
+		]
+	}
+}

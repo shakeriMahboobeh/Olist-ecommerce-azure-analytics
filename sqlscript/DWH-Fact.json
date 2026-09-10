@@ -1,0 +1,17 @@
+{
+	"name": "DWH-Fact",
+	"properties": {
+		"content": {
+			"query": "-- USE db_olist_gold;\nIF EXISTS (SELECT * FROM sys.external_tables WHERE name = 'fact_order_items')\n    EXEC('DROP EXTERNAL TABLE fact_order_items');\n    \nCREATE EXTERNAL TABLE fact_order_items\nWITH (LOCATION = 'fact_order_items/', DATA_SOURCE = gold_lake, FILE_FORMAT = parquet_ff)\nAS\nSELECT\n    ROW_NUMBER() OVER (ORDER BY oi.order_id, oi.order_item_id) AS order_item_key,\n    dc.customer_key, dp.product_key, ds.seller_key, dd.date_key as order_date_key,\n    oi.order_id, oi.order_item_id, oi.price, oi.freight_value,\n    pay.total_payment_value, rev.avg_review_score\nFROM OPENROWSET(BULK 'olist_order_items_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS oi\nJOIN OPENROWSET(BULK 'olist_orders_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS o\n    ON oi.order_id = o.order_id\nJOIN dim_customer dc ON o.customer_id = dc.customer_id\nJOIN dim_product dp ON oi.product_id = dp.product_id\nJOIN dim_seller ds ON oi.seller_id = ds.seller_id\nJOIN dim_date dd ON CAST(o.order_purchase_timestamp AS DATE) = dd.Date\nLEFT JOIN (\n    SELECT order_id, SUM(payment_value) AS total_payment_value\n    FROM OPENROWSET(BULK 'olist_order_payments_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS p\n    GROUP BY order_id\n) pay ON oi.order_id = pay.order_id\nLEFT JOIN (\n    SELECT order_id, AVG(TRY_CAST(review_score AS FLOAT)) AS avg_review_score\n    FROM OPENROWSET(BULK 'olist_order_reviews_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS r\n    GROUP BY order_id\n) rev ON oi.order_id = rev.order_id;",
+			"metadata": {
+				"language": "sql"
+			},
+			"currentConnection": {
+				"databaseName": "db_olist_gold",
+				"poolName": "Built-in"
+			},
+			"resultLimit": 5000
+		},
+		"type": "SqlQuery"
+	}
+}

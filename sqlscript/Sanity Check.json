@@ -1,0 +1,17 @@
+{
+	"name": "Sanity Check",
+	"properties": {
+		"content": {
+			"query": "-- 1. Row counts — sanity check nothing is empty\nSELECT 'dim_customer' AS TableName, COUNT(*) AS Rows FROM dim_customer\nUNION ALL SELECT 'dim_seller', COUNT(*) FROM dim_seller\nUNION ALL SELECT 'dim_product', COUNT(*) FROM dim_product\nUNION ALL SELECT 'dim_date', COUNT(*) FROM dim_date\nUNION ALL SELECT 'fact_order_items', COUNT(*) FROM fact_order_items;\n\n-- 2. Prove the joins actually work end to end\nSELECT TOP 10\n    c.customer_city,\n    p.product_category_name,\n    d.month_name,\n    d.year,\n    f.price\nFROM fact_order_items f\nJOIN dim_customer c ON f.customer_key = c.customer_key\nJOIN dim_product  p ON f.product_key  = p.product_key\nJOIN dim_date     d ON f.order_date_key = d.date_key;\n\n",
+			"metadata": {
+				"language": "sql"
+			},
+			"currentConnection": {
+				"databaseName": "db_olist_gold",
+				"poolName": "Built-in"
+			},
+			"resultLimit": 5000
+		},
+		"type": "SqlQuery"
+	}
+}

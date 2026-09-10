@@ -1,0 +1,17 @@
+{
+	"name": "Grant Access",
+	"properties": {
+		"content": {
+			"query": "CREATE USER [synw-olist-dev-weu] FROM EXTERNAL PROVIDER;\nALTER ROLE db_owner ADD MEMBER [synw-olist-dev-weu];",
+			"metadata": {
+				"language": "sql"
+			},
+			"currentConnection": {
+				"databaseName": "db_olist_gold",
+				"poolName": "Built-in"
+			},
+			"resultLimit": 5000
+		},
+		"type": "SqlQuery"
+	}
+}

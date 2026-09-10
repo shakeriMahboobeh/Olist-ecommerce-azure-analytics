@@ -1,0 +1,17 @@
+{
+	"name": "DWH-Dimension",
+	"properties": {
+		"content": {
+			"query": "\nUSE db_olist_gold;\n\n/* \nCREATE EXTERNAL DATA SOURCE silver_lake\nWITH (LOCATION = 'abfss://silver@stolistdevweu.dfs.core.windows.net/');\n\nCREATE EXTERNAL DATA SOURCE gold_lake\nWITH (LOCATION = 'abfss://gold@stolistdevweu.dfs.core.windows.net/');\n\nCREATE EXTERNAL FILE FORMAT parquet_ff\nWITH (FORMAT_TYPE = PARQUET);\n*/\nIF EXISTS (SELECT * FROM sys.external_tables WHERE name = 'dim_customer')\n    EXEC('DROP EXTERNAL TABLE dim_customer');\nIF EXISTS (SELECT * FROM sys.external_tables WHERE name = 'dim_seller')\n    EXEC('DROP EXTERNAL TABLE dim_seller');\nIF EXISTS (SELECT * FROM sys.external_tables WHERE name = 'dim_product')\n    EXEC('DROP EXTERNAL TABLE dim_product');\nIF EXISTS (SELECT * FROM sys.external_tables WHERE name = 'dim_date')\n    EXEC('DROP EXTERNAL TABLE dim_date');\n\n\nCREATE EXTERNAL TABLE dim_customer\nWITH (LOCATION = 'dim_customer/', DATA_SOURCE = gold_lake, FILE_FORMAT = parquet_ff)\nAS\nSELECT ROW_NUMBER() OVER (ORDER BY customer_id) AS customer_key, *\nFROM (\n    SELECT DISTINCT customer_id, customer_unique_id, customer_city, customer_state, customer_zip_code_prefix\n    FROM OPENROWSET(BULK 'olist_customers_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS c\n) AS c;\n\nCREATE EXTERNAL TABLE dim_seller\nWITH (LOCATION = 'dim_seller/', DATA_SOURCE = gold_lake, FILE_FORMAT = parquet_ff)\nAS\nSELECT ROW_NUMBER() OVER (ORDER BY seller_id) AS seller_key, *\nFROM (\n    SELECT DISTINCT seller_id, seller_city, seller_state, seller_zip_code_prefix\n    FROM OPENROWSET(BULK 'olist_sellers_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS s\n) AS s;\n\nCREATE EXTERNAL TABLE dim_product\nWITH (LOCATION = 'dim_product/', DATA_SOURCE = gold_lake, FILE_FORMAT = parquet_ff)\nAS\nSELECT ROW_NUMBER() OVER (ORDER BY product_id) AS product_key, *\nFROM (\n    SELECT DISTINCT p.product_id, p.product_category_name, t.product_category_name_english,\n           p.product_weight_g, p.product_length_cm, p.product_height_cm, p.product_width_cm\n    FROM OPENROWSET(BULK 'olist_products_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS p\n    LEFT JOIN OPENROWSET(BULK 'product_category_name_translation', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS t\n        ON p.product_category_name = t.product_category_name\n) AS p;\n\nCREATE EXTERNAL TABLE dim_date\nWITH (\n    LOCATION = 'dim_date/',\n    DATA_SOURCE = gold_lake,\n    FILE_FORMAT = parquet_ff\n)\nAS\nSELECT *\nFROM OPENROWSET(\n    BULK 'dim_date_seed/',\n    DATA_SOURCE = 'silver_lake',\n    FORMAT = 'DELTA'\n) AS rows;\n",
+			"metadata": {
+				"language": "sql"
+			},
+			"currentConnection": {
+				"databaseName": "db_olist_gold",
+				"poolName": "Built-in"
+			},
+			"resultLimit": 5000
+		},
+		"type": "SqlQuery"
+	}
+}

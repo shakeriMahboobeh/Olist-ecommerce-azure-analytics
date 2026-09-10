@@ -1,0 +1,131 @@
+{
+	"name": "pl_olist_bronze_to_gold",
+	"properties": {
+		"activities": [
+			{
+				"name": "nb_bronze_to_silver",
+				"type": "SynapseNotebook",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"notebook": {
+						"referenceName": "nb_bronze_to_silver",
+						"type": "NotebookReference"
+					},
+					"snapshot": true,
+					"sparkPool": {
+						"referenceName": "sparksmall",
+						"type": "BigDataPoolReference"
+					}
+				}
+			},
+			{
+				"name": "gold_dimensions",
+				"type": "Script",
+				"dependsOn": [
+					{
+						"activity": "nb_clear_gold",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"linkedServiceName": {
+					"referenceName": "ls_synapse_serverless_gold",
+					"type": "LinkedServiceReference"
+				},
+				"typeProperties": {
+					"scripts": [
+						{
+							"type": "Query",
+							"text": "IF EXISTS (SELECT * FROM sys.external_tables WHERE name = 'dim_customer')\n    EXEC('DROP EXTERNAL TABLE dim_customer');\nIF EXISTS (SELECT * FROM sys.external_tables WHERE name = 'dim_seller')\n    EXEC('DROP EXTERNAL TABLE dim_seller');\nIF EXISTS (SELECT * FROM sys.external_tables WHERE name = 'dim_product')\n    EXEC('DROP EXTERNAL TABLE dim_product');\nIF EXISTS (SELECT * FROM sys.external_tables WHERE name = 'dim_date')\n    EXEC('DROP EXTERNAL TABLE dim_date');\n\n\nCREATE EXTERNAL TABLE dim_customer\nWITH (LOCATION = 'dim_customer/', DATA_SOURCE = gold_lake, FILE_FORMAT = parquet_ff)\nAS\nSELECT ROW_NUMBER() OVER (ORDER BY customer_id) AS customer_key, *\nFROM (\n    SELECT DISTINCT customer_id, customer_unique_id, customer_city, customer_state, customer_zip_code_prefix\n    FROM OPENROWSET(BULK 'olist_customers_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS c\n) AS c;\n\nCREATE EXTERNAL TABLE dim_seller\nWITH (LOCATION = 'dim_seller/', DATA_SOURCE = gold_lake, FILE_FORMAT = parquet_ff)\nAS\nSELECT ROW_NUMBER() OVER (ORDER BY seller_id) AS seller_key, *\nFROM (\n    SELECT DISTINCT seller_id, seller_city, seller_state, seller_zip_code_prefix\n    FROM OPENROWSET(BULK 'olist_sellers_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS s\n) AS s;\n\nCREATE EXTERNAL TABLE dim_product\nWITH (LOCATION = 'dim_product/', DATA_SOURCE = gold_lake, FILE_FORMAT = parquet_ff)\nAS\nSELECT ROW_NUMBER() OVER (ORDER BY product_id) AS product_key, *\nFROM (\n    SELECT DISTINCT p.product_id, p.product_category_name, t.product_category_name_english,\n           p.product_weight_g, p.product_length_cm, p.product_height_cm, p.product_width_cm\n    FROM OPENROWSET(BULK 'olist_products_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS p\n    LEFT JOIN OPENROWSET(BULK 'product_category_name_translation', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS t\n        ON p.product_category_name = t.product_category_name\n) AS p;\n\nCREATE EXTERNAL TABLE dim_date\nWITH (\n    LOCATION = 'dim_date/',\n    DATA_SOURCE = gold_lake,\n    FILE_FORMAT = parquet_ff\n)\nAS\nSELECT *\nFROM OPENROWSET(\n    BULK 'dim_date_seed/',\n    DATA_SOURCE = 'silver_lake',\n    FORMAT = 'DELTA'\n) AS rows;\n"
+						}
+					],
+					"scriptBlockExecutionTimeout": "02:00:00"
+				}
+			},
+			{
+				"name": "gold_fact",
+				"type": "Script",
+				"dependsOn": [
+					{
+						"activity": "gold_dimensions",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"linkedServiceName": {
+					"referenceName": "ls_synapse_serverless_gold",
+					"type": "LinkedServiceReference"
+				},
+				"typeProperties": {
+					"scripts": [
+						{
+							"type": "Query",
+							"text": "IF EXISTS (SELECT * FROM sys.external_tables WHERE name = 'fact_order_items')\r\n    EXEC('DROP EXTERNAL TABLE fact_order_items');\r\n    \r\nCREATE EXTERNAL TABLE fact_order_items\r\nWITH (LOCATION = 'fact_order_items/', DATA_SOURCE = gold_lake, FILE_FORMAT = parquet_ff)\r\nAS\r\nSELECT\r\n    ROW_NUMBER() OVER (ORDER BY oi.order_id, oi.order_item_id) AS order_item_key,\r\n    dc.customer_key, dp.product_key, ds.seller_key, dd.date_key as order_date_key,\r\n    oi.order_id, oi.order_item_id, oi.price, oi.freight_value,\r\n    pay.total_payment_value, rev.avg_review_score\r\nFROM OPENROWSET(BULK 'olist_order_items_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS oi\r\nJOIN OPENROWSET(BULK 'olist_orders_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS o\r\n    ON oi.order_id = o.order_id\r\nJOIN dim_customer dc ON o.customer_id = dc.customer_id\r\nJOIN dim_product dp ON oi.product_id = dp.product_id\r\nJOIN dim_seller ds ON oi.seller_id = ds.seller_id\r\nJOIN dim_date dd ON CAST(o.order_purchase_timestamp AS DATE) = dd.Date\r\nLEFT JOIN (\r\n    SELECT order_id, SUM(payment_value) AS total_payment_value\r\n    FROM OPENROWSET(BULK 'olist_order_payments_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS p\r\n    GROUP BY order_id\r\n) pay ON oi.order_id = pay.order_id\r\nLEFT JOIN (\r\n    SELECT order_id, AVG(TRY_CAST(review_score AS FLOAT)) AS avg_review_score\r\n    FROM OPENROWSET(BULK 'olist_order_reviews_dataset', DATA_SOURCE = 'silver_lake', FORMAT = 'DELTA') AS r\r\n    GROUP BY order_id\r\n) rev ON oi.order_id = rev.order_id;"
+						}
+					],
+					"scriptBlockExecutionTimeout": "02:00:00"
+				}
+			},
+			{
+				"name": "nb_clear_gold",
+				"type": "SynapseNotebook",
+				"dependsOn": [
+					{
+						"activity": "nb_bronze_to_silver",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "0.12:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"notebook": {
+						"referenceName": "nb_clear_gold",
+						"type": "NotebookReference"
+					},
+					"snapshot": true,
+					"sparkPool": {
+						"referenceName": "sparksmall",
+						"type": "BigDataPoolReference"
+					}
+				}
+			}
+		],
+		"annotations": [],
+		"lastPublishTime": "2026-09-10T08:48:49Z"
+	},
+	"type": "Microsoft.Synapse/workspaces/pipelines"
+}
