@@ -18,15 +18,16 @@
 				"spark.dynamicAllocation.enabled": "false",
 				"spark.dynamicAllocation.minExecutors": "2",
 				"spark.dynamicAllocation.maxExecutors": "2",
-				"spark.autotune.trackingId": "62a0a9aa-158d-4500-b035-91182e889549"
+				"spark.autotune.trackingId": "16d3ce66-f247-4af3-b0d4-82b24c941e28"
 			}
 		},
 		"metadata": {
 			"saveOutput": true,
-			"synapse_widget": {
-				"version": "0.1"
-			},
 			"enableDebugMode": false,
+			"kernelspec": {
+				"name": "synapse_pyspark",
+				"display_name": "Synapse PySpark"
+			},
 			"language_info": {
 				"name": "python"
 			},
@@ -37,14 +38,13 @@
 				"endpoint": "https://synw-olist-dev-weu.dev.azuresynapse.net/livyApi/versions/2019-11-01-preview/sparkPools/sparksmall",
 				"auth": {
 					"type": "AAD",
-					"authResource": "https://dev.azuresynapse.net",
-					"authHeader": null
+					"authResource": "https://dev.azuresynapse.net"
 				},
 				"sparkVersion": "3.5",
 				"nodeCount": 10,
 				"cores": 4,
 				"memory": 28,
-				"extraHeader": null
+				"automaticScaleJobs": false
 			},
 			"sessionKeepAliveTimeout": 30
 		},
@@ -52,6 +52,11 @@
 			{
 				"cell_type": "code",
 				"source": [
+					"# nb_clear_gold — pipeline step that runs before the Gold SQL scripts.\n",
+					"# Serverless SQL's CETAS refuses to write into a non-empty folder, and\n",
+					"# DROP EXTERNAL TABLE only removes the SQL metadata, not the actual\n",
+					"# files — so this clears each table's Parquet folder in storage first.\n",
+					"# try/except keeps it safe to re-run even if a folder is already empty.\n",
 					"from notebookutils import mssparkutils\n",
 					"\n",
 					"tables = [\"dim_customer\", \"dim_seller\", \"dim_product\", \"dim_date\", \"fact_order_items\"]\n",
@@ -63,7 +68,8 @@
 					"        print(f\"Deleted: {t}\")\n",
 					"    except Exception as e:\n",
 					"        print(f\"Skipped {t} (likely already empty): {e}\")"
-				]
+				],
+				"execution_count": null
 			}
 		]
 	}
