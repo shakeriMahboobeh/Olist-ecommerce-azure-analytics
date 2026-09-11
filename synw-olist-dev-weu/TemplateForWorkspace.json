@@ -183,28 +183,6 @@
 			]
 		},
 		{
-			"name": "[concat(parameters('workspaceName'), '/ds_gold_container')]",
-			"type": "Microsoft.Synapse/workspaces/datasets",
-			"apiVersion": "2019-06-01-preview",
-			"properties": {
-				"linkedServiceName": {
-					"referenceName": "synw-olist-dev-weu-WorkspaceDefaultStorage",
-					"type": "LinkedServiceReference"
-				},
-				"annotations": [],
-				"type": "Binary",
-				"typeProperties": {
-					"location": {
-						"type": "AzureBlobFSLocation",
-						"fileSystem": "gold"
-					}
-				}
-			},
-			"dependsOn": [
-				"[concat(variables('workspaceId'), '/linkedServices/synw-olist-dev-weu-WorkspaceDefaultStorage')]"
-			]
-		},
-		{
 			"name": "[concat(parameters('workspaceName'), '/ls_synapse_serverless_gold')]",
 			"type": "Microsoft.Synapse/workspaces/linkedServices",
 			"apiVersion": "2019-06-01-preview",
