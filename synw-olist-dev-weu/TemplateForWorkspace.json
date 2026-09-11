@@ -421,7 +421,7 @@
 						"spark.dynamicAllocation.enabled": "false",
 						"spark.dynamicAllocation.minExecutors": "2",
 						"spark.dynamicAllocation.maxExecutors": "2",
-						"spark.autotune.trackingId": "6176e64d-2ca5-4ee0-ac5c-ddd73e00427b"
+						"spark.autotune.trackingId": "cb8f5fcd-e20f-4eef-89f2-d814fa5b4d7c"
 					}
 				},
 				"metadata": {
@@ -446,15 +446,13 @@
 						"sparkVersion": "3.5",
 						"nodeCount": 10,
 						"cores": 4,
-						"memory": 28,
-						"automaticScaleJobs": false
+						"memory": 28
 					},
 					"sessionKeepAliveTimeout": 30
 				},
 				"cells": [
 					{
 						"cell_type": "code",
-						"metadata": {},
 						"source": [
 							"# ============================================================\n",
 							"# BRONZE -> SILVER — DATA CLEANING\n",
@@ -638,7 +636,6 @@
 					},
 					{
 						"cell_type": "code",
-						"metadata": {},
 						"source": [
 							"# ============================================================\n",
 							"# SILVER LAYER — DATE DIMENSION SEED\n",
@@ -814,6 +811,47 @@
 			},
 			"dependsOn": [],
 			"location": "swedencentral"
+		},
+		{
+			"name": "[concat(parameters('workspaceName'), '/tr_nightly_rebuild')]",
+			"type": "Microsoft.Synapse/workspaces/triggers",
+			"apiVersion": "2019-06-01-preview",
+			"properties": {
+				"annotations": [],
+				"runtimeState": "Stopped",
+				"pipelines": [
+					{
+						"pipelineReference": {
+							"referenceName": "pl_olist_bronze_to_gold",
+							"type": "PipelineReference"
+						},
+						"parameters": {}
+					}
+				],
+				"type": "ScheduleTrigger",
+				"typeProperties": {
+					"recurrence": {
+						"frequency": "Week",
+						"interval": 1,
+						"startTime": "2026-09-11T08:06:00",
+						"timeZone": "W. Europe Standard Time",
+						"schedule": {
+							"minutes": [
+								30
+							],
+							"hours": [
+								12
+							],
+							"weekDays": [
+								"Sunday"
+							]
+						}
+					}
+				}
+			},
+			"dependsOn": [
+				"[concat(variables('workspaceId'), '/pipelines/pl_olist_bronze_to_gold')]"
+			]
 		}
 	]
 }
