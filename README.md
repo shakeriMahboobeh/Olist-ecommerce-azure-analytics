@@ -87,7 +87,7 @@ Notebook (Bronze -> Silver)  --(on success)-->  Notebook (Clear Gold folders)
        --(on success)-->  Script (Rebuild Gold fact table)
 ```
 
-A weekly Schedule trigger (`tr_nightly_rebuild`) is defined against the pipeline and kept stopped by default, since the source dataset is a static historical export and re-running the full rebuild on an unchanging schedule would consume compute for no benefit. It can be started from Manage → Triggers whenever a live scheduled run needs to be demonstrated; the pipeline itself is otherwise run on demand via Trigger now.
+A weekly Schedule trigger (`tr_weekly_rebuild`) is defined against the pipeline and kept stopped by default, since the source dataset is a static historical export and re-running the full rebuild on an unchanging schedule would consume compute for no benefit. It can be started from Manage → Triggers whenever a live scheduled run needs to be demonstrated; the pipeline itself is otherwise run on demand via Trigger now.
 
 ## 📁 Repo Structure
 
@@ -112,7 +112,7 @@ A weekly Schedule trigger (`tr_nightly_rebuild`) is defined against the pipeline
 │   ├── Grant Access           # Creates the SQL user for the workspace's managed identity, grants db_owner
 │   └── Sanity Check           # Row-count and cross-table join verification queries
 ├── trigger/                   # Synapse-managed: trigger definitions
-│   └── tr_nightly_rebuild     # Weekly Schedule trigger, kept stopped (see Pipeline Automation)
+│   └── tr_weekly_rebuild     # Weekly Schedule trigger, kept stopped (see Pipeline Automation)
 ├── publish_config.json        # Synapse Git-integration config (auto-generated)
 └── README.md
 ```
