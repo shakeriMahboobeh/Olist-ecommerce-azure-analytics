@@ -59,14 +59,6 @@ One fact table (`fact_order_items`) at order-item grain, four dimensions:
 
 Every dimension is built with CETAS against the cleaned Silver Delta tables; the fact table joins all four dimensions plus two aggregated subqueries (payment total, average review score per order).
 
-## 🔍 Data Engineering & Quality Challenges
-
-**Pipeline login pointed at the wrong endpoint.** Every Script activity failed with `Login failed for user '<token-identified principal>'`, even after granting the workspace's managed identity Synapse Administrator and adding it as `db_owner` in `db_olist_gold`. Actual cause: the default linked service pointed at the **dedicated pool** endpoint (`<workspace>.sql.azuresynapse.net`) instead of the **serverless** endpoint (`<workspace>-ondemand.sql.azuresynapse.net`). Fixed with a new linked service using the correct `-ondemand` FQDN.
-
-**A Delete activity removed an entire storage container, not just its contents.** A root-level wildcard path was intended to clear only the files inside the Gold container, but `*` was matched as a literal folder name rather than a pattern for this dataset/activity combination, and the container itself was deleted. Replaced with a Notebook activity running `mssparkutils.fs.rm()` per table — an approach already proven reliable.
-
-**SQL Authentication has no identity to pass through to storage.** Power BI connected to the Gold layer with SQL Authentication, but reading data failed with "content of directory cannot be listed" — a SQL-auth login has no Azure AD identity to hand off to storage. Fixed with a database-scoped credential (`CREATE DATABASE SCOPED CREDENTIAL ... WITH IDENTITY = 'Managed Identity'`) attached to the `gold_lake` external data source.
-
 ## ⚡ Synapse Serverless SQL Notes
 
 **Every external table is a pointer, not storage.** No `INSERT`/`UPDATE`/`MERGE` in serverless SQL — the only way to persist a query result is CETAS (`CREATE EXTERNAL TABLE ... AS SELECT`), and `DROP EXTERNAL TABLE` only removes the metadata pointer, never the underlying files.
